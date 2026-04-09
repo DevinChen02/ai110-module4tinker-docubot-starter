@@ -9,6 +9,7 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import re
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -16,6 +17,11 @@ class DocuBot:
         docs_folder: directory containing project documentation files
         llm_client: optional Gemini client for LLM based answers
         """
+        # If docs_folder is relative, resolve it relative to this script's location
+        if not os.path.isabs(docs_folder):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            docs_folder = os.path.join(script_dir, docs_folder)
+        
         self.docs_folder = docs_folder
         self.llm_client = llm_client
 
@@ -64,7 +70,10 @@ class DocuBot:
         ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+        for filename, text in documents:
+            tokens = set(re.findall(r"\b\w+\b", f"{filename} {text}".lower()))
+            for token in tokens:
+                index.setdefault(token, set()).add(filename)
         return index
 
     # -----------------------------------------------------------
@@ -81,8 +90,14 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        query_tokens = re.findall(r"\b\w+\b", query.lower())
+        text_tokens = set(re.findall(r"\b\w+\b", text.lower()))
+
+        score = 0
+        for token in query_tokens:
+            if token in text_tokens:
+                score += 1
+        return score
 
     def retrieve(self, query, top_k=3):
         """
@@ -91,9 +106,32 @@ class DocuBot:
 
         Return a list of (filename, text) sorted by score descending.
         """
+        if not self.documents:
+            return []
+
+        query_tokens = re.findall(r"\b\w+\b", query.lower())
+
+        candidate_filenames = set()
+        for token in query_tokens:
+            candidate_filenames.update(self.index.get(token, set()))
+
+        if candidate_filenames:
+            candidate_documents = [doc for doc in self.documents if doc[0] in candidate_filenames]
+        else:
+            candidate_documents = self.documents
+
         results = []
-        # TODO: implement retrieval logic
-        return results[:top_k]
+        for filename, text in candidate_documents:
+            score = self.score_document(query, text)
+
+            filename_tokens = set(re.findall(r"\b\w+\b", filename.lower()))
+            score += sum(1 for token in query_tokens if token in filename_tokens)
+
+            if score > 0:
+                results.append((score, filename, text))
+
+        results.sort(key=lambda item: (-item[0], item[1]))
+        return [(filename, text) for _, filename, text in results[:top_k]]
 
     # -----------------------------------------------------------
     # Answering Modes
